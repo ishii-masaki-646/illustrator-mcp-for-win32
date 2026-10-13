@@ -1,8 +1,15 @@
-# illustrator-mcp
+# illustrator-mcp-for-win32
 
-An implementation of MCP server for Adobe Illustrator.
-It enables text, image, and path manipulation and information retrieval.
-This tool only works on macOS.
+An MCP server for Adobe Illustrator.
+It supports text, image, and path manipulation and information retrieval.
+This build supports only Windows (`win32/amd64`).
+
+## Requirements
+
+- Windows 10 or 11 (`amd64`)
+- Adobe Illustrator (installed locally)
+- Node.js 18+
+- PowerShell (available by default on Windows)
 
 ## Usage
 
@@ -14,7 +21,7 @@ Add the following to your MCP client configuration file.
     "illustrator": {
       "command": "node",
       "args": [
-        "~/Documents/web/illustrator-mcp/build/index.js"
+        "C:\\\\path\\\\to\\\\illustrator-mcp-for-win32\\\\build\\\\index.js"
       ]
     }
   }
@@ -24,6 +31,7 @@ Add the following to your MCP client configuration file.
 ## Development
 
 ```bash
-yarn
-yarn test
+npm install
+npm run build
+npm test
 ```
