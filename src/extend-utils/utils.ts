@@ -1,15 +1,18 @@
-import { execSync } from "child_process";
-import fs, { mkdirSync } from "fs";
+import { execFileSync } from "child_process";
+import fs from "fs";
 import os from "os";
+import path from "path";
 
 import { jsonDefinition } from "./json";
 
 export const executeExtendScript = (script: string) => {
-  // 一時フォルダ生成
-  const dir = `${os.homedir()}/illustrator-mcp-tmp`;
-  if (!fs.existsSync(dir)) {
-    mkdirSync(dir);
+  if (process.platform !== "win32" || process.arch !== "x64") {
+    throw new Error("This build supports only win32/amd64.");
   }
+
+  // 一時フォルダ生成
+  const dir = path.join(os.tmpdir(), "illustrator-mcp-tmp");
+  fs.mkdirSync(dir, { recursive: true });
 
   const scriptDefinitions = [
     createUUIDDefinition,
@@ -20,25 +23,100 @@ export const executeExtendScript = (script: string) => {
     toPtDefinition,
   ];
 
-  // ExtendScript 生成
-  const extendScriptPath = fs.realpathSync(`${dir}/message.jsx`);
-  // 文字化け防止のために，BOM 付きで保存
+  // ExtendScript 生成（文字化け防止のために BOM 付きで保存）
+  const extendScriptPath = path.join(dir, "message.jsx");
   const combinedScript = `\ufeff
 ${scriptDefinitions.join("\n")}
 ${script}`;
   fs.writeFileSync(extendScriptPath, combinedScript);
 
-  // AppleScript 生成
-  const appleScript = `tell application "Adobe Illustrator"
-    set resultText to do javascript of file "${extendScriptPath}"
-end tell
-return resultText`;
-  const appleScriptPath = fs.realpathSync(`${dir}/message.scpt`);
-  fs.writeFileSync(appleScriptPath, appleScript);
+  // PowerShell 生成
+  const escapedPath = escapePowerShellSingleQuotedString(extendScriptPath);
+  const powerShellScriptPath = path.join(dir, "message.ps1");
+  const powerShellScript = `
+$ErrorActionPreference = "Stop"
+$jsxPath = '${escapedPath}'
 
-  // 実行
-  const output = execSync(`osascript ${appleScriptPath}`);
-  return output.toString();
+try {
+  $app = New-Object -ComObject Illustrator.Application
+} catch {
+  throw "Failed to create Illustrator COM object. Ensure Adobe Illustrator is installed. " + $_.Exception.Message
+}
+
+try {
+  $jsx = Get-Content -LiteralPath $jsxPath -Raw -Encoding UTF8
+  $result = $app.DoJavaScript($jsx)
+  if ($null -eq $result) {
+    [Console]::Out.Write("")
+  } else {
+    [Console]::Out.Write([string]$result)
+  }
+} catch {
+  throw "Failed to execute ExtendScript. " + $_.Exception.Message
+}
+`;
+  fs.writeFileSync(powerShellScriptPath, powerShellScript);
+
+  try {
+    return execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        powerShellScriptPath,
+      ],
+      { encoding: "utf8" }
+    );
+  } catch (error) {
+    throw new Error(
+      `Illustrator script execution failed.\n${formatExecFileError(error)}`
+    );
+  }
+};
+
+const escapePowerShellSingleQuotedString = (value: string) =>
+  value.replace(/'/g, "''");
+
+const formatExecFileError = (error: unknown) => {
+  if (!(error instanceof Error)) {
+    return "Unknown PowerShell execution error.";
+  }
+
+  const execError = error as Error & {
+    status?: number;
+    signal?: string;
+    stdout?: string | Buffer;
+    stderr?: string | Buffer;
+  };
+
+  const lines = [error.message];
+  if (typeof execError.status === "number") {
+    lines.push(`status: ${execError.status}`);
+  }
+  if (typeof execError.signal === "string") {
+    lines.push(`signal: ${execError.signal}`);
+  }
+
+  const stdout =
+    typeof execError.stdout === "string"
+      ? execError.stdout
+      : execError.stdout?.toString();
+  const stderr =
+    typeof execError.stderr === "string"
+      ? execError.stderr
+      : execError.stderr?.toString();
+
+  if (stdout && stdout.trim().length > 0) {
+    lines.push(`stdout:\n${stdout.trim()}`);
+  }
+  if (stderr && stderr.trim().length > 0) {
+    lines.push(`stderr:\n${stderr.trim()}`);
+  }
+
+  return lines.join("\n");
 };
 
 const toPtDefinition = `
